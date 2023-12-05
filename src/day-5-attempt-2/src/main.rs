@@ -1,7 +1,8 @@
-use std::{fs, error::Error};
+use std::{fs, error::Error, time::Instant, char};
 
 use once_cell::sync::Lazy;
-use itertools::{Itertools, Chunks};
+use itertools::Itertools;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use regex::Regex;
 
 struct Rule {
@@ -11,14 +12,12 @@ struct Rule {
 }
 
 impl Rule {
-    fn get_match(&self, input: u32) -> Option<u32> {
-        let is_in_bounds = input >= self.source_start && input < self.source_start + self.count;
-        
-        if is_in_bounds {
-            Some(input - self.source_start + self.destination_start)
-        } else {
-            None
-        }
+    fn is_in_bounds(&self, input: u32) -> bool {
+        input >= self.source_start && input < self.source_start + self.count
+    }
+    
+    fn get_match_unchecked(&self, input: u32) -> u32 {
+        input - self.source_start + self.destination_start
     }
 }
 
@@ -54,19 +53,17 @@ impl AlmanacMap {
     }
     
     fn map(&self, number: u32) -> u32 {
-        for rule in &self.rules {
-            let rule_match = rule.get_match(number);
-            
-            if let Some(rule_match) = rule_match {
-                return rule_match
-            }
+        match self.rules.iter().find(|rule| rule.is_in_bounds(number)) {
+            Some(rule) => rule.get_match_unchecked(number),
+            None => number,
         }
-        number
     }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let input_file = fs::read_to_string("input.txt")?;
+    
+    let instant = Instant::now();
     
     let find_char = |c: char| {
         input_file.chars().position(|x| x == c).unwrap()
@@ -84,10 +81,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     println!("Seeds and maps parsed");
     
-    let mut min_location: u32 = u32::MAX;
     
-    for chunk in &seed_rules_strings.chunks(2) {
-        let seed_rule: Vec<u32> = chunk.map(|string| string.parse::<u32>().unwrap()).collect();
+    let handle_seed_range = |chunk: &Vec<&str>| {
+        let instant = Instant::now();
+        
+        let seed_rule: Vec<u32> = chunk.iter().map(|string| string.parse::<u32>().unwrap()).collect();
         
         let mut current_map_index: usize = 0;
         let mut resources: Vec<u32> = (seed_rule[0]..seed_rule[0] + seed_rule[1]).collect();
@@ -109,15 +107,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         
         let min = *resources.iter().min().unwrap();
         
-        println!("Local minimum: {}", min);
+        println!("Local minimum: {}, finished in {:.2?}", min, instant.elapsed());
         
-        if min_location > min {
-            min_location = min;
-            println!("New total minimum!");
-        }
-    }
+        min
+    };
     
-    println!("Min: {}", min_location);
+    let chunks: Vec<Vec<&str>> = seed_rules_strings
+        .chunks(2)
+        .into_iter()
+        .map(|x| x.collect_vec())
+        .collect();
+    
+    let min = chunks.par_iter().map(handle_seed_range).min().unwrap();
+    
+    println!("Min: {}, finished in {:.2?}", min, instant.elapsed());
     
     Ok(())
 }
