@@ -1,8 +1,8 @@
-use std::{fs, time::Instant};
+use std::{fs, time::Instant, collections::{HashMap, hash_map::DefaultHasher}, hash::{Hash, Hasher}, rc::Rc, cell::RefCell, result};
 
 use anyhow::Result;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum SpringType {
     Ok,
     Damaged,
@@ -20,7 +20,7 @@ impl SpringType {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash)]
 struct Segment {
     spring_type: SpringType,
     count: i32,
@@ -78,16 +78,57 @@ impl Record {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Requirement {
     None,
     CantBeDamaged,
     MustBeDamaged,
 }
 
+struct Memo {
+    // map: HashMap<(Option<Segment>, Option<i32>, Requirement, u64), u32>,
+    map: HashMap<u64, u32>,
+}
+
+impl Memo {
+    fn new() -> Memo {
+        Memo {
+            map: HashMap::new(),
+            // map: RefCell::new(HashMap::new()),
+        }
+    }
+    
+    fn get_memo(&mut self, first_segment: Option<&Segment>, tail_segments: &[Segment],
+                first_size: Option<i32>, tail_sizes: &[i32],
+                requirement: Requirement) -> result::Result<u32, u64> {
+        let mut hasher = DefaultHasher::new();
+        first_segment.hash(&mut hasher);
+        tail_segments.hash(&mut hasher);
+        first_size.hash(&mut hasher);
+        tail_sizes.hash(&mut hasher);
+        requirement.hash(&mut hasher);
+        
+        let hash = hasher.finish();
+        // let map = self.map.borrow_mut();
+        
+        if self.map.contains_key(&hash) {
+            Ok(self.map.get(&hash).copied().unwrap())
+        } else {
+            Err(hash)
+        }
+    }
+    
+    fn put(&mut self, hash: u64, possibilities: u32) -> u32 {
+        // let mut map = self.map.borrow_mut();
+        self.map.insert(hash, possibilities);
+        
+        possibilities
+    }
+}
+
 fn get_possibilities(first_segment: Option<&Segment>, tail_segments: &[Segment],
                      first_size: Option<i32>, tail_sizes: &[i32],
-                     requirement: Requirement) -> i32 {
+                     requirement: Requirement, memo: &mut Memo) -> u32 {
     if first_size.is_none() && first_segment.is_none() {
         return 1;
     }
@@ -106,6 +147,11 @@ fn get_possibilities(first_segment: Option<&Segment>, tail_segments: &[Segment],
         return 0;
     }
     
+    let memo_key = match memo.get_memo(first_segment, tail_segments, first_size, tail_sizes, requirement) {
+        Ok(result) => return result,
+        Err(key) => key,
+    };
+    
     let first_segment = first_segment.unwrap();
     let first_size = first_size.unwrap();
     
@@ -117,23 +163,28 @@ fn get_possibilities(first_segment: Option<&Segment>, tail_segments: &[Segment],
             if requirement == Requirement::MustBeDamaged {
                 0
             } else {
-                get_possibilities(tail_segments.get(0), tail_segments_tail,
-                    Some(first_size), tail_sizes, Requirement::None)
+                let result = get_possibilities(tail_segments.get(0), tail_segments_tail,
+                    Some(first_size), tail_sizes, Requirement::None, memo);
+                    
+                memo.put(memo_key, result)
             },
         SpringType::Damaged =>
             if requirement == Requirement::CantBeDamaged || first_segment.count > first_size {
                 0
             } else if first_segment.count == first_size {
                 get_possibilities(tail_segments.get(0), tail_segments_tail,
-                    tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged)
+                    tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged, memo
+                )
             } else {
                 get_possibilities(tail_segments.get(0), tail_segments_tail,
-                    Some(first_size - first_segment.count), tail_sizes, Requirement::MustBeDamaged)
+                    Some(first_size - first_segment.count), tail_sizes, Requirement::MustBeDamaged, memo
+                )
             },
         SpringType::Unknown => {
             if requirement == Requirement::CantBeDamaged && first_segment.count == 1 {
-                return get_possibilities(tail_segments.get(0), tail_segments_tail,
-                    Some(first_size), tail_sizes, Requirement::None);
+                let result = get_possibilities(tail_segments.get(0), tail_segments_tail,
+                    Some(first_size), tail_sizes, Requirement::None, memo);
+                return memo.put(memo_key, result);
             }
             
             let damaged_offset_range = match requirement {
@@ -142,28 +193,28 @@ fn get_possibilities(first_segment: Option<&Segment>, tail_segments: &[Segment],
                 Requirement::MustBeDamaged => 0..=0,
             };
             
-            let mut accumulator: i32 = 0;
+            let mut accumulator: u32 = 0;
             
             for damaged_offset in damaged_offset_range {
                 if first_segment.count == damaged_offset {
                     accumulator += get_possibilities(tail_segments.get(0), tail_segments_tail,
-                        Some(first_size), tail_sizes, Requirement::None);
+                        Some(first_size), tail_sizes, Requirement::None, memo);
                 } else if first_size + damaged_offset > first_segment.count {
                     accumulator += get_possibilities(tail_segments.get(0), tail_segments_tail,
-                        Some(first_size - first_segment.count + damaged_offset), tail_sizes, Requirement::MustBeDamaged);
+                        Some(first_size - first_segment.count + damaged_offset), tail_sizes, Requirement::MustBeDamaged, memo);
                 } else if first_size + damaged_offset == first_segment.count {
                     accumulator += get_possibilities(tail_segments.get(0), tail_segments_tail,
-                        tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged);
+                        tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged, memo);
                 } else {
                     let mut new_first_segment = first_segment.clone();
                     new_first_segment.count -= damaged_offset + first_size;
                     
                     accumulator += get_possibilities(Some(&new_first_segment), tail_segments,
-                        tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged);
+                        tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged, memo);
                 }
             }
             
-            accumulator
+            memo.put(memo_key, accumulator)
         },
     }
 }
@@ -207,13 +258,13 @@ pub fn main() -> Result<()> {
     
     let records: Vec<Record> = input_file.lines().map(Record::from_line).collect();
     
-    let x: i32 = records.iter()
+    let x: u32 = records.iter()
         .map(|record| unfold_record(record.clone()))
         .enumerate()
         .map(|(i, record)| {
             let now = Instant::now();
             let result = get_possibilities(Some(&record.segments[0]), &record.segments[1..],
-                Some(record.sizes[0]), &record.sizes[1..], Requirement::None);
+                Some(record.sizes[0]), &record.sizes[1..], Requirement::None, &mut Memo::new());
             println!("finished {} in {:?}", i, now.elapsed());
             return result;
         })
