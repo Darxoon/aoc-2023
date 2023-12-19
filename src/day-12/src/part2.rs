@@ -20,7 +20,7 @@ impl SpringType {
     }
 }
 
-#[derive(Clone, Copy, Hash)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct Segment {
     spring_type: SpringType,
     count: i32,
@@ -85,9 +85,11 @@ enum Requirement {
     MustBeDamaged,
 }
 
+type MemoKey = (Option<Segment>, Option<i32>, Requirement, u64, u64);
+
 struct Memo {
-    // map: HashMap<(Option<Segment>, Option<i32>, Requirement, u64), u32>,
-    map: HashMap<u64, u32>,
+    map: HashMap<MemoKey, u32>,
+    // map: HashMap<u64, u32>,
 }
 
 impl Memo {
@@ -100,27 +102,25 @@ impl Memo {
     
     fn get_memo(&mut self, first_segment: Option<&Segment>, tail_segments: &[Segment],
                 first_size: Option<i32>, tail_sizes: &[i32],
-                requirement: Requirement) -> result::Result<u32, u64> {
+                requirement: Requirement) -> result::Result<u32, MemoKey> {
         let mut hasher = DefaultHasher::new();
-        first_segment.hash(&mut hasher);
         tail_segments.hash(&mut hasher);
-        first_size.hash(&mut hasher);
-        tail_sizes.hash(&mut hasher);
-        requirement.hash(&mut hasher);
         
-        let hash = hasher.finish();
-        // let map = self.map.borrow_mut();
+        let mut second_hasher = DefaultHasher::new();
+        tail_sizes.hash(&mut second_hasher);
         
-        if self.map.contains_key(&hash) {
-            Ok(self.map.get(&hash).copied().unwrap())
+        let key: MemoKey = (first_segment.cloned(), first_size, requirement, hasher.finish(), second_hasher.finish());
+        
+        if self.map.contains_key(&key) {
+            Ok(self.map.get(&key).copied().unwrap())
         } else {
-            Err(hash)
+            Err(key)
         }
     }
     
-    fn put(&mut self, hash: u64, possibilities: u32) -> u32 {
+    fn put(&mut self, key: MemoKey, possibilities: u32) -> u32 {
         // let mut map = self.map.borrow_mut();
-        self.map.insert(hash, possibilities);
+        self.map.insert(key, possibilities);
         
         possibilities
     }
