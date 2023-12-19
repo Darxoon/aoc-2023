@@ -78,67 +78,88 @@ impl Record {
     }
 }
 
-fn get_possibilities(segments: &[Segment], sizes: &[i32], follows_damaged: bool, must_start_with_damaged: bool) -> i32 {
-    if sizes.len() == 0 {
-        if segments.iter().all(|segment| segment.spring_type != SpringType::Damaged) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Requirement {
+    None,
+    CantBeDamaged,
+    MustBeDamaged,
+}
+
+fn get_possibilities(first_segment: Option<&Segment>, tail_segments: &[Segment],
+                     first_size: Option<i32>, tail_sizes: &[i32],
+                     requirement: Requirement) -> i32 {
+    if first_size.is_none() && first_segment.is_none() {
+        return 1;
+    }
+    
+    if first_size.is_none() {
+        let first_segment_isnt_damaged = first_segment.unwrap().spring_type != SpringType::Damaged;
+        
+        if first_segment_isnt_damaged && tail_segments.iter().all(|segment| segment.spring_type != SpringType::Damaged) {
             return 1;
         } else {
             return 0;
         }
     }
     
-    if segments.len() == 0 {
+    if first_segment.is_none() {
         return 0;
     }
     
-    match segments[0].spring_type {
+    let first_segment = first_segment.unwrap();
+    let first_size = first_size.unwrap();
+    
+    let tail_segments_tail = if tail_segments.len() > 1 { &tail_segments[1..] } else { &[] };
+    let tail_sizes_tail = if tail_sizes.len() > 1 { &tail_sizes[1..] } else { &[] };
+    
+    match first_segment.spring_type {
         SpringType::Ok => 
-            if must_start_with_damaged {
+            if requirement == Requirement::MustBeDamaged {
                 0
             } else {
-                get_possibilities(&segments[1..], sizes, false, false)
+                get_possibilities(tail_segments.get(0), tail_segments_tail,
+                    Some(first_size), tail_sizes, Requirement::None)
             },
         SpringType::Damaged =>
-            if (follows_damaged && !must_start_with_damaged) || segments[0].count > sizes[0] {
+            if requirement == Requirement::CantBeDamaged || first_segment.count > first_size {
                 0
-            } else if segments[0].count == sizes[0] {
-                get_possibilities(&segments[1..], &sizes[1..], true, false)
+            } else if first_segment.count == first_size {
+                get_possibilities(tail_segments.get(0), tail_segments_tail,
+                    tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged)
             } else {
-                let mut new_sizes: Vec<i32> = sizes.to_owned();
-                new_sizes[0] -= segments[0].count;
-                
-                get_possibilities(&segments[1..], &new_sizes, true, true)
+                get_possibilities(tail_segments.get(0), tail_segments_tail,
+                    Some(first_size - first_segment.count), tail_sizes, Requirement::MustBeDamaged)
             },
         SpringType::Unknown => {
-            if follows_damaged && !must_start_with_damaged && segments[0].count == 1 {
-                return get_possibilities(&segments[1..], sizes, false, false);
+            if requirement == Requirement::CantBeDamaged && first_segment.count == 1 {
+                return get_possibilities(tail_segments.get(0), tail_segments_tail,
+                    Some(first_size), tail_sizes, Requirement::None);
             }
             
-            let damaged_offset_range = if must_start_with_damaged {
-                0..=0
-            } else if follows_damaged {
-                1..=segments[0].count
-            } else {
-                0..=segments[0].count
+            let damaged_offset_range = match requirement {
+                Requirement::None => 0..=first_segment.count,
+                Requirement::CantBeDamaged => 1..=first_segment.count,
+                Requirement::MustBeDamaged => 0..=0,
             };
             
             let mut accumulator: i32 = 0;
             
             for damaged_offset in damaged_offset_range {
-                if segments[0].count == damaged_offset {
-                    accumulator += get_possibilities(&segments[1..], &sizes, false, false)
-                } else if sizes[0] + damaged_offset > segments[0].count {
-                    let mut new_sizes: Vec<i32> = sizes.to_owned();
-                    new_sizes[0] -= segments[0].count - damaged_offset;
-                    
-                    accumulator += get_possibilities(&segments[1..], &new_sizes, true, true);
-                } else if sizes[0] + damaged_offset == segments[0].count {
-                    accumulator += get_possibilities(&segments[1..], &sizes[1..], true, false);
+                if first_segment.count == damaged_offset {
+                    accumulator += get_possibilities(tail_segments.get(0), tail_segments_tail,
+                        Some(first_size), tail_sizes, Requirement::None);
+                } else if first_size + damaged_offset > first_segment.count {
+                    accumulator += get_possibilities(tail_segments.get(0), tail_segments_tail,
+                        Some(first_size - first_segment.count + damaged_offset), tail_sizes, Requirement::MustBeDamaged);
+                } else if first_size + damaged_offset == first_segment.count {
+                    accumulator += get_possibilities(tail_segments.get(0), tail_segments_tail,
+                        tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged);
                 } else {
-                    let mut new_segments: Vec<Segment> = segments.to_owned();
-                    new_segments[0].count -= damaged_offset + sizes[0];
+                    let mut new_first_segment = first_segment.clone();
+                    new_first_segment.count -= damaged_offset + first_size;
                     
-                    accumulator += get_possibilities(&new_segments, &sizes[1..], true, false);
+                    accumulator += get_possibilities(Some(&new_first_segment), tail_segments,
+                        tail_sizes.get(0).copied(), tail_sizes_tail, Requirement::CantBeDamaged);
                 }
             }
             
@@ -190,8 +211,11 @@ pub fn main() -> Result<()> {
         .map(|record| unfold_record(record.clone()))
         .enumerate()
         .map(|(i, record)| {
-            println!("starting {}", i);
-            get_possibilities(&record.segments, &record.sizes, false, false)
+            let now = Instant::now();
+            let result = get_possibilities(Some(&record.segments[0]), &record.segments[1..],
+                Some(record.sizes[0]), &record.sizes[1..], Requirement::None);
+            println!("finished {} in {:?}", i, now.elapsed());
+            return result;
         })
         .sum();
     
