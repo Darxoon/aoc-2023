@@ -88,7 +88,7 @@ enum Requirement {
 type MemoKey = (Option<Segment>, Option<i32>, Requirement, u64, u64);
 
 struct Memo {
-    map: HashMap<MemoKey, u32>,
+    map: HashMap<MemoKey, u64>,
     // map: HashMap<u64, u32>,
 }
 
@@ -102,7 +102,7 @@ impl Memo {
     
     fn get_memo(&mut self, first_segment: Option<&Segment>, tail_segments: &[Segment],
                 first_size: Option<i32>, tail_sizes: &[i32],
-                requirement: Requirement) -> result::Result<u32, MemoKey> {
+                requirement: Requirement) -> result::Result<u64, MemoKey> {
         let mut hasher = DefaultHasher::new();
         tail_segments.hash(&mut hasher);
         
@@ -118,7 +118,7 @@ impl Memo {
         }
     }
     
-    fn put(&mut self, key: MemoKey, possibilities: u32) -> u32 {
+    fn put(&mut self, key: MemoKey, possibilities: u64) -> u64 {
         // let mut map = self.map.borrow_mut();
         self.map.insert(key, possibilities);
         
@@ -128,7 +128,7 @@ impl Memo {
 
 fn get_possibilities(first_segment: Option<&Segment>, tail_segments: &[Segment],
                      first_size: Option<i32>, tail_sizes: &[i32],
-                     requirement: Requirement, memo: &mut Memo) -> u32 {
+                     requirement: Requirement, memo: &mut Memo) -> u64 {
     if first_size.is_none() && first_segment.is_none() {
         return 1;
     }
@@ -193,7 +193,7 @@ fn get_possibilities(first_segment: Option<&Segment>, tail_segments: &[Segment],
                 Requirement::MustBeDamaged => 0..=0,
             };
             
-            let mut accumulator: u32 = 0;
+            let mut accumulator: u64 = 0;
             
             for damaged_offset in damaged_offset_range {
                 if first_segment.count == damaged_offset {
@@ -258,7 +258,7 @@ pub fn main() -> Result<()> {
     
     let records: Vec<Record> = input_file.lines().map(Record::from_line).collect();
     
-    let x: u32 = records.iter()
+    let x: u64 = records.iter()
         .map(|record| unfold_record(record.clone()))
         .enumerate()
         .map(|(i, record)| {
